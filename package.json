@@ -1,0 +1,44 @@
+{
+  "name": "fhevm-mcp",
+  "version": "0.1.0",
+  "description": "MCP server that lets an AI agent operate Zama fhEVM confidential smart contracts at runtime (encrypt inputs, call confidential functions, read ciphertext handles, user-decrypt via EIP-712).",
+  "type": "module",
+  "bin": {
+    "fhevm-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    ".env.example"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "test": "tsc && node --test dist/tests/*.test.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "fhevm",
+    "zama",
+    "fhe",
+    "confidential",
+    "ethereum",
+    "ethers"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@zama-fhe/relayer-sdk": "^0.2.0",
+    "ethers": "^6.13.5",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "typescript": "^5.7.2"
+  }
+}
