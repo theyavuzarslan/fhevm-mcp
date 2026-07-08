@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { resolveContract, requireConnected } from "../state.js";
-import { getClient } from "./connect.js";
+import { resolveContract, requireClient } from "../state.js";
 import { jsonResult, type ToolDefinition, type ToolResult } from "./types.js";
 
 export const readSchema = z.object({
@@ -20,8 +19,7 @@ function normalize(value: unknown): unknown {
 }
 
 async function handler(input: ReadInput): Promise<ToolResult> {
-  requireConnected();
-  const client = getClient();
+  const client = requireClient();
   const contract = resolveContract({
     contractName: input.contractName,
     address: input.address,

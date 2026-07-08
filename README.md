@@ -23,7 +23,10 @@ hands to drive them once deployed.
 Runs locally over stdio. No hosting required.
 
 ```bash
-npx -y fhevm-mcp
+git clone <this-repo> fhevm-mcp
+cd fhevm-mcp
+npm install
+npm run build
 ```
 
 ## MCP client config (`mcp.json`)
@@ -32,25 +35,27 @@ npx -y fhevm-mcp
 {
   "mcpServers": {
     "fhevm": {
-      "command": "npx",
-      "args": ["-y", "fhevm-mcp"],
+      "command": "node",
+      "args": ["/absolute/path/to/fhevm-mcp/dist/index.js"],
       "env": {
-        "SIGNER_PRIVATE_KEY": "0xYOUR_KEY",
-        "FHEVM_RPC_URL": "https://eth-sepolia.public.blastapi.io",
-        "FHEVM_RELAYER_URL": "https://relayer.testnet.zama.cloud"
+        "SIGNER_PRIVATE_KEY": "0xYOUR_TESTNET_KEY",
+        "FHEVM_RPC_URL": "https://ethereum-sepolia-rpc.publicnode.com",
+        "FHEVM_RELAYER_URL": "https://relayer.testnet.zama.org"
       }
     }
   }
 }
 ```
 
-Copy `.env.example` to `.env` for local runs.
+`FHEVM_RPC_URL` and `FHEVM_RELAYER_URL` are optional — they default to the
+public Sepolia endpoints above. Copy `.env.example` to `.env` for local runs.
 
 ## Tools
 
 | Tool | Purpose |
 | --- | --- |
 | `fhevm_connect` | Create relayer SDK instance + ethers provider/signer. |
+| `fhevm_status` | Report connection, signer address/balance, registered contracts. |
 | `fhevm_load_abi` | Register a contract (name + address + ABI). |
 | `fhevm_encrypt_input` | Build encrypted input handles + ZK proof. |
 | `fhevm_call` | Send a write tx (plaintext + encrypted-handle args). |
@@ -119,6 +124,7 @@ src/
   tools/
     types.ts          ToolDefinition + result helpers
     connect.ts        fhevm_connect
+    status.ts         fhevm_status
     load-abi.ts       fhevm_load_abi
     encrypt-input.ts  fhevm_encrypt_input
     call.ts           fhevm_call
@@ -130,17 +136,32 @@ src/
 ## Verifying the relayer SDK surface
 
 The exact `@zama-fhe/relayer-sdk` API moves between releases. Every SDK call is
-isolated in `src/fhevm-client.ts` and tagged with `// TODO(verify-api):` plus a
-doc link. Check those against:
+isolated in `src/fhevm-client.ts`; the current code is verified against
+v0.4.4. If you bump the SDK, re-check against:
 
 - https://docs.zama.org/protocol/relayer-sdk-guides
 - https://github.com/zama-ai/relayer-sdk
 
 ## Security
 
-- The signer private key is read from env/args and **never** logged.
+- ⚠️ **Use a dedicated testnet-only key.** The agent driving this server can
+  send arbitrary transactions from the configured signer; never point it at a
+  key holding mainnet funds. Any `.env`/`mcp.json` holding the key must be
+  gitignored and readable only by you (`chmod 600`).
+- **Encrypted keystore option** — instead of a plaintext key, set
+  `SIGNER_KEYSTORE_PATH` (an ethers/geth encrypted JSON keystore) plus
+  `SIGNER_KEYSTORE_PASSWORD`. Create one with:
+
+  ```bash
+  node -e "const {Wallet}=require('ethers');new Wallet(process.env.PK).encrypt(process.env.PW).then(j=>console.log(j))" > keystore.json
+  ```
+
+- Prefer env configuration over passing the key as a tool argument, so the key
+  never enters the agent conversation.
+- The private key is validated on connect and **never** logged or echoed.
 - stdout carries only the JSON-RPC stream; diagnostics go to stderr.
-- Run against testnets first.
+- Reconnecting to a different chain clears the contract registry, so stale
+  ABIs/addresses from another network can't be used by mistake.
 
 ## License
 

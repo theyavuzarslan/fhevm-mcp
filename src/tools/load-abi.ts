@@ -1,10 +1,14 @@
 import { z } from "zod";
+import { isAddress } from "ethers";
 import { getState } from "../state.js";
 import { jsonResult, type ToolDefinition, type ToolResult } from "./types.js";
 
 export const loadAbiSchema = z.object({
   name: z.string().min(1).describe("Friendly name used to reference this contract later."),
-  address: z.string().min(1).describe("Deployed contract address (0x...)."),
+  address: z
+    .string()
+    .refine(isAddress, "Not a valid EVM address.")
+    .describe("Deployed contract address (0x...)."),
   abi: z
     .union([z.array(z.unknown()), z.string()])
     .describe("Contract ABI as a JSON array, or a JSON string of one."),

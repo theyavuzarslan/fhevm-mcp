@@ -1,5 +1,4 @@
-import type { ethers } from "ethers";
-import type { FhevmInstance } from "./fhevm-client.js";
+import type { FhevmClient } from "./fhevm-client.js";
 
 /**
  * A contract registered via `fhevm_load_abi`. Stored so later tool calls can be
@@ -14,11 +13,11 @@ export interface RegisteredContract {
 /**
  * Process-wide mutable state for the MCP server. The server is single-tenant
  * and runs over local stdio, so a module-level singleton is appropriate.
+ * The connected `FhevmClient` is the single source of truth for the relayer
+ * instance, provider and signer.
  */
 export interface FhevmState {
-  instance: FhevmInstance | null;
-  provider: ethers.Provider | null;
-  signer: ethers.Signer | null;
+  client: FhevmClient | null;
   chainId: number | null;
   relayerUrl: string | null;
   rpcUrl: string | null;
@@ -26,9 +25,7 @@ export interface FhevmState {
 }
 
 const state: FhevmState = {
-  instance: null,
-  provider: null,
-  signer: null,
+  client: null,
   chainId: null,
   relayerUrl: null,
   rpcUrl: null,
@@ -39,29 +36,34 @@ export function getState(): FhevmState {
   return state;
 }
 
-export function requireConnected(): Required<
-  Pick<FhevmState, "instance" | "provider" | "signer" | "chainId">
-> & { relayerUrl: string; rpcUrl: string } {
-  if (
-    !state.instance ||
-    !state.provider ||
-    !state.signer ||
-    state.chainId === null ||
-    !state.relayerUrl ||
-    !state.rpcUrl
-  ) {
+/**
+ * Record a successful connection. If the chain changed since the previous
+ * connection, the contract registry is cleared — registered addresses/ABIs
+ * from another network would be silently wrong.
+ */
+export function setConnected(
+  client: FhevmClient,
+  opts: { chainId: number; relayerUrl: string; rpcUrl: string },
+): { contractsCleared: boolean } {
+  const chainChanged = state.chainId !== null && state.chainId !== opts.chainId;
+  if (chainChanged) {
+    state.contracts.clear();
+  }
+  state.client = client;
+  state.chainId = opts.chainId;
+  state.relayerUrl = opts.relayerUrl;
+  state.rpcUrl = opts.rpcUrl;
+  return { contractsCleared: chainChanged };
+}
+
+/** Return the connected client or throw a uniform "connect first" error. */
+export function requireClient(): FhevmClient {
+  if (!state.client) {
     throw new Error(
       "Not connected. Call `fhevm_connect` first to set up the relayer instance, provider and signer.",
     );
   }
-  return {
-    instance: state.instance,
-    provider: state.provider,
-    signer: state.signer,
-    chainId: state.chainId,
-    relayerUrl: state.relayerUrl,
-    rpcUrl: state.rpcUrl,
-  };
+  return state.client;
 }
 
 /**

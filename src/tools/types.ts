@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 /** MCP text content block. */
 export interface TextContent {
@@ -41,6 +42,20 @@ export function defineTool<TSchema extends z.ZodTypeAny>(
   def: ToolDefinition<TSchema>,
 ): AnyToolDefinition {
   return def as unknown as AnyToolDefinition;
+}
+
+/**
+ * Convert a tool's zod schema into the JSON Schema advertised in `tools/list`,
+ * so MCP clients see real argument names, types and descriptions instead of a
+ * permissive empty object.
+ */
+export function toInputSchema(schema: z.ZodTypeAny): {
+  type: "object";
+  [key: string]: unknown;
+} {
+  const json = zodToJsonSchema(schema, { $refStrategy: "none" }) as Record<string, unknown>;
+  delete json.$schema;
+  return { ...json, type: "object" };
 }
 
 /** Helper to wrap an arbitrary JSON-serializable payload as a tool result. */

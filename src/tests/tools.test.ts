@@ -1,21 +1,24 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { getState, resolveContract, requireConnected } from "../state.js";
-import { jsonResult } from "../tools/types.js";
+import { getState, resolveContract, requireClient, setConnected } from "../state.js";
+import type { FhevmClient } from "../fhevm-client.js";
+import { jsonResult, toInputSchema } from "../tools/types.js";
 import { allTools } from "../tools/index.js";
 import { loadAbiTool, loadAbiSchema } from "../tools/load-abi.js";
 import { encryptInputSchema } from "../tools/encrypt-input.js";
+import { connectSchema } from "../tools/connect.js";
+import { statusTool } from "../tools/status.js";
 
 function resetState(): void {
   const state = getState();
-  state.instance = null;
-  state.provider = null;
-  state.signer = null;
+  state.client = null;
   state.chainId = null;
   state.relayerUrl = null;
   state.rpcUrl = null;
   state.contracts.clear();
 }
+
+const fakeClient = {} as unknown as FhevmClient;
 
 describe("jsonResult serialization", () => {
   it("renders bigints as decimal strings", () => {
@@ -34,10 +37,10 @@ describe("jsonResult serialization", () => {
 });
 
 describe("tool registry", () => {
-  it("exposes all seven tools with unique fhevm_-prefixed names", () => {
+  it("exposes all eight tools with unique fhevm_-prefixed names", () => {
     const names = allTools.map((t) => t.name);
-    assert.equal(names.length, 7);
-    assert.equal(new Set(names).size, 7, "tool names must be unique");
+    assert.equal(names.length, 8);
+    assert.equal(new Set(names).size, 8, "tool names must be unique");
     for (const name of names) {
       assert.ok(name.startsWith("fhevm_"), `${name} should be fhevm_-prefixed`);
     }
@@ -52,11 +55,65 @@ describe("tool registry", () => {
   });
 });
 
-describe("requireConnected", () => {
+describe("requireClient / setConnected", () => {
   beforeEach(resetState);
 
   it("throws when no connection has been established", () => {
-    assert.throws(() => requireConnected(), /Not connected/);
+    assert.throws(() => requireClient(), /Not connected/);
+  });
+
+  it("returns the connected client after setConnected", () => {
+    setConnected(fakeClient, { chainId: 11155111, relayerUrl: "r", rpcUrl: "u" });
+    assert.equal(requireClient(), fakeClient);
+  });
+
+  it("keeps the contract registry when reconnecting to the same chain", () => {
+    setConnected(fakeClient, { chainId: 11155111, relayerUrl: "r", rpcUrl: "u" });
+    getState().contracts.set("Token", { name: "Token", address: "0x1", abi: [] });
+    const { contractsCleared } = setConnected(fakeClient, {
+      chainId: 11155111,
+      relayerUrl: "r2",
+      rpcUrl: "u2",
+    });
+    assert.equal(contractsCleared, false);
+    assert.equal(getState().contracts.size, 1);
+  });
+
+  it("clears the contract registry when the chain changes", () => {
+    setConnected(fakeClient, { chainId: 11155111, relayerUrl: "r", rpcUrl: "u" });
+    getState().contracts.set("Token", { name: "Token", address: "0x1", abi: [] });
+    const { contractsCleared } = setConnected(fakeClient, {
+      chainId: 1,
+      relayerUrl: "r",
+      rpcUrl: "u",
+    });
+    assert.equal(contractsCleared, true);
+    assert.equal(getState().contracts.size, 0);
+  });
+});
+
+describe("toInputSchema", () => {
+  it("emits real property names, types and descriptions for every tool", () => {
+    for (const tool of allTools) {
+      const schema = toInputSchema(tool.schema) as {
+        type: string;
+        properties?: Record<string, unknown>;
+      };
+      assert.equal(schema.type, "object", `${tool.name} schema must be an object`);
+      assert.ok(schema.properties, `${tool.name} must expose properties`);
+    }
+  });
+
+  it("exposes load_abi's name/address/abi arguments", () => {
+    const schema = toInputSchema(loadAbiSchema) as unknown as {
+      properties: Record<string, { description?: string }>;
+      required?: string[];
+    };
+    assert.ok(schema.properties.name);
+    assert.ok(schema.properties.address);
+    assert.ok(schema.properties.abi);
+    assert.deepEqual(schema.required?.sort(), ["abi", "address", "name"]);
+    assert.ok(schema.properties.name.description?.length);
   });
 });
 
@@ -141,10 +198,18 @@ describe("fhevm_load_abi handler", () => {
 });
 
 describe("zod input schemas", () => {
-  it("load_abi requires name and address", () => {
+  it("load_abi requires name and a valid EVM address", () => {
     assert.ok(!loadAbiSchema.safeParse({ abi: [] }).success);
     assert.ok(
-      loadAbiSchema.safeParse({ name: "x", address: "0x1", abi: [] }).success,
+      !loadAbiSchema.safeParse({ name: "x", address: "0x1", abi: [] }).success,
+      "short/invalid addresses must be rejected",
+    );
+    assert.ok(
+      loadAbiSchema.safeParse({
+        name: "x",
+        address: "0x8ba1f109551bD432803012645Ac136ddd64DBA72",
+        abi: [],
+      }).success,
     );
   });
 
@@ -164,5 +229,27 @@ describe("zod input schemas", () => {
       values: [{ type: "euint64", value: "1000" }],
     });
     assert.ok(ok.success);
+  });
+
+  it("connect rejects a malformed private key and defaults chainId to Sepolia", () => {
+    assert.ok(!connectSchema.safeParse({ signerPrivateKey: "0xbeef" }).success);
+    const parsed = connectSchema.parse({});
+    assert.equal(parsed.chainId, 11155111);
+  });
+});
+
+describe("fhevm_status handler", () => {
+  beforeEach(resetState);
+
+  it("reports disconnected state without throwing", async () => {
+    getState().contracts.set("Token", {
+      name: "Token",
+      address: "0x8ba1f109551bD432803012645Ac136ddd64DBA72",
+      abi: [],
+    });
+    const result = await statusTool.handler({});
+    const parsed = JSON.parse(result.content[0]!.text);
+    assert.equal(parsed.connected, false);
+    assert.equal(parsed.contracts.length, 1);
   });
 });

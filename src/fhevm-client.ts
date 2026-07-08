@@ -5,19 +5,14 @@
  * the Zama relayer API directly. Everything else interacts with fhEVM through
  * the small typed surface exported here.
  *
- * IMPORTANT FOR REVIEWERS: the exact `@zama-fhe/relayer-sdk` API surface drifts
- * between releases. Every call into the SDK is annotated with a
- * `// TODO(verify-api):` comment pointing at:
+ * All SDK call signatures below are verified against `@zama-fhe/relayer-sdk`
+ * v0.4.4 (`lib/node.d.ts`). If you bump the SDK, re-check:
  *   - https://docs.zama.org/protocol/relayer-sdk-guides
  *   - https://github.com/zama-ai/relayer-sdk
- * Verify these against the version pinned in package.json before production use.
  */
 
 import { ethers } from "ethers";
-// TODO(verify-api): confirm package entrypoint + named exports. Some builds ship
-// a `/web` or `/node` subpath and export `createInstance` + `SepoliaConfig`.
-// https://github.com/zama-ai/relayer-sdk
-import { createInstance } from "@zama-fhe/relayer-sdk/node";
+import { createInstance, SepoliaConfig } from "@zama-fhe/relayer-sdk/node";
 
 /** Supported encrypted scalar types accepted as inputs. */
 export type EncryptableType =
@@ -60,10 +55,8 @@ export interface FhevmInstance {
 /**
  * Minimal structural type for the relayer SDK instance. We model only the
  * methods we use so the rest of the file stays type-checked without depending on
- * the SDK's (possibly changing) exported types.
- *
- * TODO(verify-api): align method names/signatures with the installed version.
- * https://docs.zama.org/protocol/relayer-sdk-guides
+ * the SDK's (possibly changing) exported types. Matches `FhevmInstance` in
+ * `@zama-fhe/relayer-sdk` v0.2.0.
  */
 interface RelayerSdkInstance {
   createEncryptedInput(
@@ -74,8 +67,8 @@ interface RelayerSdkInstance {
   createEIP712(
     publicKey: string,
     contractAddresses: string[],
-    startTimestamp: string | number,
-    durationDays: string | number,
+    startTimestamp: number,
+    durationDays: number,
   ): EIP712;
   userDecrypt(
     handleContractPairs: { handle: string; contractAddress: string }[],
@@ -84,12 +77,14 @@ interface RelayerSdkInstance {
     signature: string,
     contractAddresses: string[],
     userAddress: string,
-    startTimestamp: string | number,
-    durationDays: string | number,
+    startTimestamp: number,
+    durationDays: number,
   ): Promise<Record<string, bigint | boolean | string>>;
-  publicDecrypt(
-    handles: string[],
-  ): Promise<Record<string, bigint | boolean | string>>;
+  publicDecrypt(handles: string[]): Promise<{
+    clearValues: Record<string, bigint | boolean | string>;
+    abiEncodedClearValues: string;
+    decryptionProof: string;
+  }>;
 }
 
 interface EncryptedInputBuilder {
@@ -121,8 +116,12 @@ function stringifyDecryptResult(
   raw: Record<string, bigint | boolean | string>,
   handles: string[],
 ): DecryptedValue[] {
+  // The SDK keys results by handle hex; be tolerant of casing differences.
+  const byLowerKey = new Map(
+    Object.entries(raw).map(([k, v]) => [k.toLowerCase(), v]),
+  );
   return handles.map((handle) => {
-    const v = raw[handle];
+    const v = raw[handle] ?? byLowerKey.get(handle.toLowerCase());
     return { handle, value: v === undefined ? "" : String(v) };
   });
 }
@@ -147,15 +146,21 @@ export class FhevmClient {
     const provider = new ethers.JsonRpcProvider(opts.rpcUrl);
     const signer = new ethers.Wallet(opts.signerPrivateKey, provider);
 
-    // TODO(verify-api): `createInstance` config keys. Recent SDKs accept a
-    // network/RPC, relayerUrl/gatewayUrl, and chainId, or a preset like
-    // `SepoliaConfig`. Confirm exact field names.
-    // https://docs.zama.org/protocol/relayer-sdk-guides
+    // `createInstance` requires the fhEVM coprocessor contract addresses (ACL,
+    // KMS verifier, input verifier, gateway verifiers). SDK v0.4.4 only ships
+    // the Sepolia preset, so we start from `SepoliaConfig` and override the
+    // endpoints the caller controls.
+    if (opts.chainId !== SepoliaConfig.chainId) {
+      throw new Error(
+        `Unsupported chainId ${opts.chainId}: @zama-fhe/relayer-sdk v0.4.4 only ` +
+          `ships coprocessor contract addresses for Sepolia (${SepoliaConfig.chainId}).`,
+      );
+    }
     const raw = (await createInstance({
-      chainId: opts.chainId,
+      ...SepoliaConfig,
       network: opts.rpcUrl,
       relayerUrl: opts.relayerUrl,
-    } as never)) as unknown as RelayerSdkInstance;
+    } as Parameters<typeof createInstance>[0])) as unknown as RelayerSdkInstance;
 
     return new FhevmClient({ raw }, provider, signer, opts.chainId);
   }
@@ -172,10 +177,6 @@ export class FhevmClient {
     userAddress: string,
     values: EncryptValue[],
   ): Promise<EncryptedInputResult> {
-    // TODO(verify-api): `createEncryptedInput(contractAddress, userAddress)` and
-    // the chained `.addNN()` / `.encrypt()` builder. Confirm method names and
-    // whether `encrypt()` is async.
-    // https://github.com/zama-ai/relayer-sdk
     let builder = this.instance.raw.createEncryptedInput(
       contractAddress,
       userAddress,
@@ -273,15 +274,10 @@ export class FhevmClient {
   ): Promise<DecryptedValue[]> {
     const userAddress = await this.getSignerAddress();
 
-    // TODO(verify-api): keypair generation + EIP-712 construction + userDecrypt
-    // signature. Confirm `generateKeypair`, `createEIP712`, the exact EIP-712
-    // type name (e.g. "UserDecryptRequestVerification"), and the argument order
-    // of `userDecrypt`.
-    // https://docs.zama.org/protocol/relayer-sdk-guides
     const { publicKey, privateKey } = this.instance.raw.generateKeypair();
 
-    const startTimestamp = Math.floor(Date.now() / 1000).toString();
-    const durationDays = "10";
+    const startTimestamp = Math.floor(Date.now() / 1000);
+    const durationDays = 10;
     const contractAddresses = [contractAddress];
 
     const eip712 = this.instance.raw.createEIP712(
@@ -291,10 +287,9 @@ export class FhevmClient {
       durationDays,
     );
 
-    // TODO(verify-api): the SDK's EIP-712 `types` object usually includes an
-    // `EIP712Domain` entry that ethers rejects in `signTypedData`. We strip it
-    // and pass the remaining primary type. Confirm the primary type key name.
-    // https://github.com/zama-ai/relayer-sdk
+    // The SDK's EIP-712 `types` object includes an `EIP712Domain` entry that
+    // ethers rejects in `signTypedData`; strip it and sign the remaining
+    // primary type (`UserDecryptRequestVerification`).
     const { EIP712Domain: _ignored, ...signTypes } = eip712.types as Record<
       string,
       ethers.TypedDataField[]
@@ -327,10 +322,7 @@ export class FhevmClient {
 
   /** Request public decryption for handles that are publicly decryptable. */
   async publicDecrypt(handles: string[]): Promise<DecryptedValue[]> {
-    // TODO(verify-api): `publicDecrypt(handles)` return shape — keyed by handle
-    // vs array. Confirm against installed version.
-    // https://docs.zama.org/protocol/relayer-sdk-guides
     const raw = await this.instance.raw.publicDecrypt(handles);
-    return stringifyDecryptResult(raw, handles);
+    return stringifyDecryptResult(raw.clearValues, handles);
   }
 }

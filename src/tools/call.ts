@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { resolveContract, requireConnected } from "../state.js";
-import { getClient } from "./connect.js";
+import { resolveContract, requireClient } from "../state.js";
 import { jsonResult, type ToolDefinition, type ToolResult } from "./types.js";
 
 export const callSchema = z.object({
@@ -18,8 +17,7 @@ export const callSchema = z.object({
 export type CallInput = z.infer<typeof callSchema>;
 
 async function handler(input: CallInput): Promise<ToolResult> {
-  requireConnected();
-  const client = getClient();
+  const client = requireClient();
   const contract = resolveContract({
     contractName: input.contractName,
     address: input.address,

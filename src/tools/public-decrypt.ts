@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { requireConnected } from "../state.js";
-import { getClient } from "./connect.js";
+import { requireClient } from "../state.js";
 import { jsonResult, type ToolDefinition, type ToolResult } from "./types.js";
 
 export const publicDecryptSchema = z.object({
@@ -16,8 +15,7 @@ function asArray(h: string | string[]): string[] {
 }
 
 async function handler(input: PublicDecryptInput): Promise<ToolResult> {
-  requireConnected();
-  const client = getClient();
+  const client = requireClient();
   const handles = asArray(input.handles);
   const decrypted = await client.publicDecrypt(handles);
   return jsonResult({ decrypted });

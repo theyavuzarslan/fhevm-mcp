@@ -1,4 +1,5 @@
 import { connectTool } from "./connect.js";
+import { statusTool } from "./status.js";
 import { loadAbiTool } from "./load-abi.js";
 import { encryptInputTool } from "./encrypt-input.js";
 import { callTool } from "./call.js";
@@ -9,6 +10,7 @@ import { defineTool, type AnyToolDefinition } from "./types.js";
 
 export const allTools: AnyToolDefinition[] = [
   defineTool(connectTool),
+  defineTool(statusTool),
   defineTool(loadAbiTool),
   defineTool(encryptInputTool),
   defineTool(callTool),

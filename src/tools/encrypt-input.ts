@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type { EncryptableType, EncryptValue } from "../fhevm-client.js";
-import { resolveContract, requireConnected } from "../state.js";
-import { getClient } from "./connect.js";
+import { resolveContract, requireClient } from "../state.js";
 import { jsonResult, type ToolDefinition, type ToolResult } from "./types.js";
 
 const encryptableType = z.enum([
@@ -41,8 +40,7 @@ export const encryptInputSchema = z.object({
 export type EncryptInputInput = z.infer<typeof encryptInputSchema>;
 
 async function handler(input: EncryptInputInput): Promise<ToolResult> {
-  requireConnected();
-  const client = getClient();
+  const client = requireClient();
   const contract = resolveContract({
     contractName: input.contractName,
     address: input.address,

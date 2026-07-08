@@ -9,19 +9,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { allTools } from "./tools/index.js";
-import type { ToolResult } from "./tools/types.js";
-
-// Lazily convert each tool's zod schema to a JSON schema for the tools list.
-// We use a minimal hand-rolled conversion to avoid extra deps; for richer
-// schemas the agent can rely on the description text.
-function jsonSchemaFor(): Tool["inputSchema"] {
-  // We expose a permissive object schema; precise validation still happens via
-  // zod in each handler. The rich per-arg docs live in the tool description.
-  return {
-    type: "object",
-    additionalProperties: true,
-  };
-}
+import { toInputSchema, type ToolResult } from "./tools/types.js";
 
 async function main(): Promise<void> {
   const server = new Server(
@@ -40,7 +28,7 @@ async function main(): Promise<void> {
     const tools: Tool[] = allTools.map((t) => ({
       name: t.name,
       description: t.description,
-      inputSchema: jsonSchemaFor(),
+      inputSchema: toInputSchema(t.schema) as Tool["inputSchema"],
     }));
     return { tools };
   });
